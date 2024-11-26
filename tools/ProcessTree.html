@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>进程树可视化工具</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --hover-color: #1d4ed8;
+            --bg-color: #f1f5f9;
+            --card-bg: #ffffff;
+            --border-color: #e2e8f0;
+            --text-color: #1e293b;
+            --text-light: #64748b;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.5;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            margin-bottom: 24px;
+            text-align: center;
+        }
+
+        .header h1 {
+            color: var(--primary-color);
+            font-size: 2em;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: var(--text-light);
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .search-box {
+            flex: 1;
+            padding: 8px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.2s;
+        }
+
+        .search-box:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        textarea {
+            width: 100%;
+            height: 200px;
+            padding: 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 14px;
+            resize: vertical;
+            margin-bottom: 16px;
+            transition: border-color 0.2s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 8px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: var(--hover-color);
+        }
+
+        .tree {
+            margin-top: 20px;
+        }
+
+        .tree ul {
+            list-style-type: none;
+            padding-left: 24px;
+        }
+
+        .tree li {
+            position: relative;
+            padding: 8px 0;
+            transition: background-color 0.2s;
+        }
+
+        .tree li::before {
+            content: "";
+            position: absolute;
+            left: -16px;
+            top: 50%;
+            width: 12px;
+            height: 1px;
+            background-color: var(--border-color);
+        }
+
+        .tree ul > li::after {
+            content: "";
+            position: absolute;
+            left: -16px;
+            top: -8px;
+            bottom: 50%;
+            width: 1px;
+            background-color: var(--border-color);
+        }
+
+        .tree ul > li:last-child::after {
+            bottom: auto;
+            height: calc(50% + 8px);
+        }
+
+        .process-node {
+            padding: 8px 12px;
+            background-color: var(--bg-color);
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .process-node:hover {
+            background-color: #e2e8f0;
+        }
+
+        .process-info {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .highlight {
+            background-color: #fef08a !important;
+            border-radius: 6px;
+        }
+
+        .label {
+            color: var(--text-light);
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+
+        .value {
+            color: var(--text-color);
+            font-family: monospace;
+        }
+
+        #searchResult {
+            margin-top: 8px;
+            color: var(--text-light);
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>进程树可视化工具</h1>
+            <p>将 wmic process get Name,ParentProcessId,ProcessId 的输出转换为树形结构</p>
+        </div>
+
+        <div class="card">
+            <div class="input-group">
+                <input type="text" id="pidSearch" class="search-box" placeholder="输入PID搜索进程...">
+                <button onclick="searchPID()">搜索</button>
+            </div>
+            <div id="searchResult"></div>
+        </div>
+
+        <div class="card">
+            <textarea id="input" placeholder="请粘贴 wmic process get Name,ParentProcessId,ProcessId 的输出..."></textarea>
+            <button onclick="processInput()">生成进程树</button>
+        </div>
+
+        <div class="card">
+            <div id="output" class="tree"></div>
+        </div>
+    </div>
+
+    <script>
+		function parseProcessData(input) {
+			const lines = input.trim().split('\n');
+			lines.shift();
+			
+			return lines.map(line => {
+				const parts = line.trim().split(/\s+/);
+				const ppid = parseInt(parts[parts.length - 2]); // ParentProcessId
+				const pid = parseInt(parts[parts.length - 1]);  // ProcessId
+				const name = parts.slice(0, -2).join(' ');      // Name
+				
+				return {
+					name: name,
+					pid: pid,
+					ppid: ppid
+				};
+			}).filter(process => !isNaN(process.pid) && !isNaN(process.ppid));
+		}
+
+        function buildProcessTree(processes) {
+            const processMap = new Map();
+            const roots = [];
+
+            processes.forEach(process => {
+                process.children = [];
+                processMap.set(process.pid, process);
+            });
+
+            processes.forEach(process => {
+                const parent = processMap.get(process.ppid);
+                if (parent) {
+                    parent.children.push(process);
+                } else {
+                    roots.push(process);
+                }
+            });
+
+            return { roots, processMap };
+        }
+
+        function renderProcessTree(processes, parentElement) {
+            const ul = document.createElement('ul');
+            
+            processes.forEach(process => {
+                const li = document.createElement('li');
+                const nodeDiv = document.createElement('div');
+                nodeDiv.className = 'process-node';
+                nodeDiv.setAttribute('data-pid', process.pid);
+                
+                const processInfo = document.createElement('div');
+                processInfo.className = 'process-info';
+
+                // Name
+                const nameInfo = document.createElement('span');
+                nameInfo.innerHTML = `<span class="label">进程:</span> <span class="value">${process.name}</span>`;
+                
+                // PID
+                const pidInfo = document.createElement('span');
+                pidInfo.innerHTML = `<span class="label">PID:</span> <span class="value">${process.pid}</span>`;
+                
+                // PPID
+                const ppidInfo = document.createElement('span');
+                ppidInfo.innerHTML = `<span class="label">PPID:</span> <span class="value">${process.ppid}</span>`;
+                
+                processInfo.appendChild(nameInfo);
+                processInfo.appendChild(pidInfo);
+                processInfo.appendChild(ppidInfo);
+                
+                nodeDiv.appendChild(processInfo);
+                li.appendChild(nodeDiv);
+                
+                if (process.children.length > 0) {
+                    renderProcessTree(process.children, li);
+                }
+                
+                ul.appendChild(li);
+            });
+            
+            parentElement.appendChild(ul);
+        }
+
+        let currentProcessMap = null;
+
+        function processInput() {
+            const input = document.getElementById('input').value;
+            const output = document.getElementById('output');
+            output.innerHTML = '';
+
+            if (!input.trim()) {
+                output.innerHTML = '<p style="color: #ef4444;">请输入进程数据！</p>';
+                return;
+            }
+
+            try {
+                const processes = parseProcessData(input);
+                const { roots, processMap } = buildProcessTree(processes);
+                currentProcessMap = processMap;
+                renderProcessTree(roots, output);
+                document.getElementById('searchResult').textContent = '';
+            } catch (error) {
+                output.innerHTML = '<p style="color: #ef4444;">处理数据时出错，请确保输入格式正确！</p>';
+                console.error(error);
+            }
+        }
+
+        function searchPID() {
+            if (!currentProcessMap) {
+                document.getElementById('searchResult').textContent = '请先生成进程树！';
+                return;
+            }
+
+            const searchPid = parseInt(document.getElementById('pidSearch').value);
+            const resultDiv = document.getElementById('searchResult');
+            
+            // 清除之前的高亮
+            document.querySelectorAll('.highlight').forEach(el => {
+                el.classList.remove('highlight');
+            });
+
+            if (isNaN(searchPid)) {
+                resultDiv.textContent = '请输入有效的PID！';
+                return;
+            }
+
+            const processNode = document.querySelector(`[data-pid="${searchPid}"]`);
+            if (processNode) {
+                processNode.classList.add('highlight');
+                processNode.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                resultDiv.textContent = '找到进程！';
+            } else {
+                resultDiv.textContent = '未找到对应PID的进程！';
+            }
+        }
+
+        // 添加回车键搜索支持
+        document.getElementById('pidSearch').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchPID();
+            }
+        });
+    </script>
+</body>
+</html>
